@@ -1,0 +1,36 @@
+config global
+  config system global
+    set hostname fweb1-azcli
+    set admintimeout 120
+    set timezone 57
+  end
+end
+config system ha
+  set mode active-passive
+  set group-id 6
+  set group-name template-ap
+  set tunnel-local 10.151.1.35
+  set tunnel-peer 10.151.1.36 
+
+end
+config system interface
+  edit "port1"
+    set type physical
+    set allowaccess ping ssh https FWB-manager
+    set mode dhcp
+    config  secondaryip
+    end
+    config  classless_static_route
+    end
+  next
+  edit "port2"
+    set type physical
+    set allowaccess ping ssh https FWB-manager
+    set mode static
+    set ip 10.151.1.35/27
+    config  secondaryip
+    end
+    config  classless_static_route
+    end
+  next  
+end

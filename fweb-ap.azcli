@@ -1,0 +1,127 @@
+#####  variables to change according to the environment
+$subscription='XXXXXX'
+$rg='cloudteam_mremini_fwebap-azcli'
+$location='francecentral'
+$vnet='mremini_fwebap-azcli_vnet'
+$vnetcidr= '10.151.1.0/24'
+$avset= 'fweb-ha-availabilityset'
+
+
+###Subnet names and address prefixes  Variables
+$subnet1='sn-fweb-pub'
+$subnet2='sn-fweb-priv'
+$subnet1prefix='10.151.1.0/27'
+$subnet2prefix='10.151.1.32/27'
+
+###LB names and Frontendip
+$lbint='lbint-fweb'
+$lbintfrontendname='fweb-frontend'
+$lbintprivip='10.151.1.4'
+$lbprob='fwebprobe'
+$lbintpool='fwebpool'
+
+###NSG Names
+$nsgpub='nsg-fweb-pub'
+$nsgpriv='nsg-fweb-priv'
+
+###FortiWeb VM Information 
+$adminUsername='mremini'
+$passwordFortinet='XXXXX'
+$vmname1='fweb1'
+$vm1size='Standard_F2s_v2'
+$vm1nic1=$vmname1+'nic1'
+$vm1nic2=$vmname1+'nic2'
+$vm1nic1ip='10.151.1.6'
+$vm1nic2ip='10.151.1.36'
+$fweb1customdata= '/home/mounira/fweb1.tpl'
+$vmname2='fweb2'
+$vm2size='Standard_F2s_v2'
+$vm2nic1=$vmname2+'nic1'
+$vm2nic2=$vmname2+'nic2'
+$vm2nic1ip='10.151.1.7'
+$vm2nic2ip='10.151.1.37'
+$fweb2customdata= '/home/mounira/fweb2.tpl'
+
+
+
+########################################################
+#            Create Resource Group (if not existing)
+########################################################  
+
+az group create --location  $location  --name  $rg 
+
+########################################################
+#            Create VNET
+######################################################## 
+
+az network vnet create  --name $vnet  -g $rg --address-prefix $vnetcidr --location  $location
+
+#######################################################
+#          Create Subnets
+#######################################################  
+az network vnet subnet create --address-prefixes $subnet1prefix -g $rg  --vnet-name $vnet --name $subnet1 
+az network vnet subnet create --address-prefixes $subnet2prefix -g $rg  --vnet-name $vnet --name $subnet2   
+
+
+
+##########################################################
+#          Create Internal Load Balancer and health probe
+##########################################################
+
+az network lb create --name $lbint -g $rg --sku Standard  --vnet-name $vnet --frontend-ip-name $lbintfrontendname --subnet  $subnet1  --private-ip-address $lbintprivip --location  $location 
+az network lb probe create --name $lbprob --port 443 --protocol Tcp --lb-name  $lbint -g $rg
+
+
+#######################################################
+#          Create NSG and Rules
+#######################################################
+az network nsg create -g $rg -n $nsgpub
+az network nsg create -g $rg -n $nsgpriv
+
+
+#####pub 
+az network nsg rule create -g $rg --nsg-name $nsgpub -n allowall --priority 100 --direction inbound --protocol '*' --source-address-prefixes "*" --destination-port-ranges '*'
+az network nsg rule create -g $rg --nsg-name $nsgpub -n allowall --priority 100 --direction outbound  --protocol "*" --destination-port-ranges "*" --source-address-prefixes "*"
+
+#####priv 
+az network nsg rule create -g $rg --nsg-name $nsgpriv -n allowall --priority 100 --direction inbound --protocol '*' --source-address-prefixes $vnetcidr --destination-port-ranges '*'
+az network nsg rule create -g $rg --nsg-name $nsgpriv -n allowall --priority 100 --direction outbound  --protocol "*" --destination-port-ranges "*" --source-address-prefixes "*"
+
+
+
+#######################################################
+#            Create FWEB NICs
+#######################################################
+
+#####FWEB1
+az network nic create -g $rg --vnet-name $vnet --subnet $subnet1  --name $vm1nic1 --network-security-group $nsgpub  --private-ip-address $vm1nic1ip --ip-forwarding true --accelerated-networking false
+az network nic create -g $rg --vnet-name $vnet --subnet $subnet2  --name $vm1nic2 --network-security-group $nsgpriv --private-ip-address $vm1nic2ip --ip-forwarding true --accelerated-networking false
+#####FWEB2
+az network nic create -g $rg --vnet-name $vnet --subnet $subnet1  --name $vm2nic1 --network-security-group $nsgpub  --private-ip-address $vm2nic1ip --ip-forwarding true --accelerated-networking false
+az network nic create -g $rg --vnet-name $vnet --subnet $subnet2  --name $vm2nic2 --network-security-group $nsgpriv --private-ip-address $vm2nic2ip --ip-forwarding true --accelerated-networking false
+
+#######################################################
+#            Create Availability set
+#######################################################
+az vm availability-set create --name $avset -g $rg --location $location
+
+
+#######################################################
+#            Create VMs
+#######################################################
+#####FWEB1
+az vm create -g $rg --name $vmname1 --image "fortinet:fortinet_fortiweb-vm_v5:fortinet_fw-vm:6.3.11" --data-disk-sizes-gb 30 --admin-username $adminUsername --admin-password $passwordFortinet --size $vm1size  --nics $vm1nic1 $vm1nic2 --availability-set $avset --tags Role=FTNT --custom-data  $fweb1customdata
+#####FWEB2
+az vm create -g $rg --name $vmname2 --image "fortinet:fortinet_fortiweb-vm_v5:fortinet_fw-vm:6.3.11" --data-disk-sizes-gb 30 --admin-username $adminUsername --admin-password $passwordFortinet --size $vm2size  --nics $vm2nic1 $vm2nic2  --availability-set $avset --tags Role=FTNT --custom-data  $fweb2customdata
+
+#################################################################################
+#          Create Loadbalancer Backend Pools and load balancing rules  
+#################################################################################
+ 
+az network lb address-pool create -g $rg --lb-name $lbint --name  $lbintpool
+
+#Private LB attach VM to backend pool , only FWEB1
+az network nic ip-config address-pool add -g $rg --lb-name $lbint --address-pool $lbintpool --nic-name $vm1nic1 --ip-config-name ipconfig1
+# LB rules
+az network lb rule create -g $rg --lb-name $lbint --name All-int --frontend-ip-name $lbintfrontendname --backend-pool-name $lbintpool --protocol Tcp --frontend-port 443 --backend-port 443 --probe-name $lbprob --floating-ip true
+
